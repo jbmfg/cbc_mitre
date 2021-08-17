@@ -25,6 +25,7 @@ def write_to_disk(filename, json_data):
     filetimestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     with open(f"{filetimestamp}_{filename}", 'w', encoding='utf-8') as outfile:
         json.dump(json_data, outfile, indent=4, ensure_ascii=False)
+    return True
 
 def get_mitre_ttps():
     from attackcti import attack_client
@@ -97,8 +98,8 @@ def draw_charts(project, mitre_merge_alert_ttp):
     fig.write_image(f"{project}_radar_cb_analytics_by_tactic.png", engine="kaleido")
 
 def write_layer(layer_name, techniques, out_file, max_value=0):
-    VERSION = "4.1"
-    NAME = "Carbon Black ATT&CK Analytics: Basic Example"
+    VERSION = "4.2"
+    NAME = layer_name
     DESCRIPTION = "CB Analytics/Endpoint Standard"
     DOMAIN = "enterprise-attack"
     platform_layer = {
@@ -120,13 +121,10 @@ def write_layer(layer_name, techniques, out_file, max_value=0):
         "tacticRowBackground": "#1d428a"
     }
     if max_value:
-        platform_layer["legendItems"] = [
-            {"color": "#ffffff", "label": "No alerts or events"},
-            {"color": "#0091da", "label": "TTP identified"}
-        ]
         platform_layer["maxValue"] = max_value
-    write_to_disk(out_file, platform_layer)
-
+        platform_layer["legendItems"] = [{"color": "#ffffff", "label": "No alerts or events"},
+                                         {"color": "#0091da", "label": "TTP identified"}]
+    return write_to_disk(out_file, platform_layer)
 
 def main():
     parser = argparse.ArgumentParser(
@@ -138,7 +136,6 @@ def main():
     parser.add_argument("-c", "--csv", action='store_true', help="Export the enriched alert data to a csv file")
     parser.add_argument("-l", "--local_ttps", action='store_true', help="Use local version of ttps in all_techniques.json")
     args = parser.parse_args()
-
 
     # Load json data into pandas data frame
     json_data = pd.read_json(args.alert_file)
@@ -334,7 +331,6 @@ def main():
         tl.append(techniques)
     NAME = "CB Endpoint Standard: Analytic Alerts with scoring by alert count"
     write_layer(NAME, tl, f'{args.project}_attack_cb_metadata_score_alert_count.json', max_score)
-
 
 if __name__ == "__main__":
     sys.exit(main())
