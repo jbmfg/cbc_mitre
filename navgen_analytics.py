@@ -15,7 +15,6 @@ import pandas as pd
 import plotly.express as px
 import plotly.io as pio
 
-from attackcti import attack_client
 
 
 def write_to_disk(filename, json_data):
@@ -23,76 +22,17 @@ def write_to_disk(filename, json_data):
     with open(f"{filetimestamp}_{filename}", 'w', encoding='utf-8') as outfile:
         json.dump(json_data, outfile, indent=4, ensure_ascii=False)
 
-
-def main():
-
-    parser = argparse.ArgumentParser(prog="navgen_analytics.py",
-                                     description="A program that takes \
-                                         CB_ANALYTICS json file written by \
-                                         get_base_alerts.py as input and \
-                                         generates Mitre ATT&CK navigator layers\
-                                         and Pandas graphs.")
-    parser.add_argument("-f", "--alert_file", required=True,
-                        help="The alert data json file written by \
-                              get_base_alerts.py")
-    parser.add_argument("-p", "--project", required=False,
-                        help="Project Name")
-    parser.add_argument("-c", "--csv", action='store_true',
-                        help="Export the enriched alert data to a csv file")
-
-    args = parser.parse_args()
-
-    pd.set_option('display.max_rows', None)
-    pd.set_option('display.max_columns', None)
-    pd.set_option('display.width', None)
-    pd.set_option('display.max_colwidth', None)
-    pio.templates.default = "seaborn"
-
-    json_data = pd.read_json(args.alert_file)
-    bn = json_data.results.values.tolist()
-    df_alert = pd.DataFrame(json_data.results.values.tolist())
-    df_alert = df_alert.loc[df_alert['type'] == 'CB_ANALYTICS']
-
-    df_column_headers = df_alert.columns.tolist()
-
-    df_threat_indicators = pd.json_normalize(bn, 'threat_indicators', df_column_headers, record_prefix='threat_indicators_', errors='ignore')
-    df_ttps = df_threat_indicators.explode('threat_indicators_ttps').drop(columns=['threat_indicators']).reset_index()
-    df_ttps['mitre_technique'] = df_ttps['threat_indicators_ttps'].str.extract(r'(?<=MITRE_)(.*?)(?=\_)')
-    df_ttps.head()
-
+def get_mitre_ttps():
+    from attackcti import attack_client
     lift = attack_client()
     all_techniques = lift.get_techniques()
     all_techniques = lift.remove_revoked(all_techniques)
-    len(all_techniques)
-
     all_techniques = lift.get_techniques(stix_format=False)
     all_techniques = lift.remove_revoked(all_techniques)
+    return all_techniques
 
-    # Get all Mitre Techniques
-    techniques_df = pd.json_normalize(all_techniques)
-    # Drop sub-techniques
-    techniques_df = techniques_df[techniques_df['x_mitre_is_subtechnique']==False]
-    techniques_df = techniques_df[['matrix','tactic','technique','technique_id']]
-
-    # technique_id has a one to many relationship with tactic and the tactic column stores values as a list. This command explodes (flattens) the tactic values so that we are left with a table of all techniques and tactics.
-    techniques_df = techniques_df.explode("tactic")
-
-    mitre_merge_alert_ttp = pd.merge(
-        df_ttps,
-        techniques_df,
-        left_on=["mitre_technique"],
-        right_on=["technique_id"],
-    )
-
-    if args.csv == True:
-        mitre_merge_alert_ttp.to_csv(f'{args.project}_alerts.csv')
-
-    mitre_merge_alert_ttp.sort_values(by='severity', ascending=False).reset_index(drop=True).head()
-
-    mitre_merge_alert_ttp.loc[mitre_merge_alert_ttp['severity'] >= 8].sort_values(by='severity', ascending=False).reset_index(drop=True).head()
-
-    mitre_merge_alert_ttp.loc[mitre_merge_alert_ttp['technique'] == "Account Manipulation"].sort_values(by='severity', ascending=False).reset_index(drop=True).head()
-
+def draw_charts(project, mitre_merge_alert_ttp):
+    # Bar chart by severity
     df_bar = (mitre_merge_alert_ttp['severity']
             .value_counts()
             .rename_axis('severity')
@@ -100,11 +40,10 @@ def main():
             .sort_values(by=['severity']))
     fig = px.bar(df_bar, x='severity', y='count',
                 title="CB Analytics Alerts by Severity",
-                labels={"severity": "Severity",
-                        "count": "Count"})
+                labels={"severity": "Severity", "count": "Count"})
+    fig.write_image(f"{project}_bar_cb_analytics_by_severity.png", engine="kaleido")
 
-    fig.write_image(f"{args.project}_bar_cb_analytics_by_severity.png", engine="kaleido")
-
+    # Bar chart by tactic
     df_bar = (mitre_merge_alert_ttp['tactic']
             .value_counts()
             .rename_axis('tactic')
@@ -113,11 +52,10 @@ def main():
     fig = px.bar(df_bar, y='count', x='tactic',
                 height=600,
                 title="CB Analytics Alerts by MITRE ATT&CK Tactic",
-                labels={"tactic": "MITRE ATT&CK Tactic",
-                        "count": "Count"})
+                labels={"tactic": "MITRE ATT&CK Tactic","count": "Count"})
+    fig.write_image(f"{project}_bar_cb_analytics_by_tactic.png", engine="kaleido")
 
-    fig.write_image(f"{args.project}_bar_cb_analytics_by_tactic.png", engine="kaleido")
-
+    # Bar chart by technique
     df_bar = (mitre_merge_alert_ttp['technique']
             .value_counts()
             .rename_axis('technique')
@@ -126,11 +64,10 @@ def main():
     fig = px.bar(df_bar, x='count', y='technique', orientation='h',
                 height=600,
                 title="CB Analytics Alerts by MITRE ATT&CK Technique",
-                labels={"technique": "MITRE ATT&CK Technique",
-                        "count": "Count"})
+                labels={"technique": "MITRE ATT&CK Technique", "count": "Count"})
+    fig.write_image(f"{project}_bar_cb_analytics_by_technique.png", engine="kaleido")
 
-    fig.write_image(f"{args.project}_bar_cb_analytics_by_technique.png", engine="kaleido")
-
+    # Radar chart by tactic
     df_tactic = (mitre_merge_alert_ttp['tactic']
             .value_counts()
             .rename_axis('tactic')
@@ -153,8 +90,76 @@ def main():
     ),
     showlegend=False
     )
+    fig.write_image(f"{project}_radar_cb_analytics_by_tactic.png", engine="kaleido")
 
-    fig.write_image(f"{args.project}_radar_cb_analytics_by_tactic.png", engine="kaleido")
+def main():
+    parser = argparse.ArgumentParser(
+        prog="navgen_analytics.py",
+        description="Takes CB_ANALYTICS json from get_base_alerts.py and generates Mitre ATT&CK navigator layers"
+    )
+    parser.add_argument("-f", "--alert_file", required=True, help="The alert data json file written by get_base_alerts.py")
+    parser.add_argument("-p", "--project", required=False, help="Project Name")
+    parser.add_argument("-c", "--csv", action='store_true', help="Export the enriched alert data to a csv file")
+    parser.add_argument("-l", "--local_ttps", action='store_true', help="Use local version of ttps in all_techniques.json")
+    args = parser.parse_args()
+
+    if args.local_ttps:
+        with open("all_techniques.json", "r") as f:
+            all_techniques = json.load(f)
+    else:
+        all_techniques = get_mitre_ttps()
+
+    # Pandas options
+    pd.set_option('display.max_rows', None)
+    pd.set_option('display.max_columns', None)
+    pd.set_option('display.width', None)
+    pd.set_option('display.max_colwidth', None)
+    pio.templates.default = "seaborn"
+
+    # Load json data into pandas data frame
+    json_data = pd.read_json(args.alert_file)
+    bn = json_data.results.values.tolist()
+    df_alert = pd.DataFrame(json_data.results.values.tolist())
+    df_alert = df_alert.loc[df_alert['type'] == 'CB_ANALYTICS']
+    df_column_headers = df_alert.columns.tolist()
+
+    df_threat_indicators = pd.json_normalize(
+        bn,
+        'threat_indicators',
+        df_column_headers,
+        record_prefix='threat_indicators_',
+        errors='ignore'
+    )
+    df_ttps = df_threat_indicators.explode('threat_indicators_ttps').drop(columns=['threat_indicators']).reset_index()
+    df_ttps['mitre_technique'] = df_ttps['threat_indicators_ttps'].str.extract(r'(?<=MITRE_)(.*?)(?=\_)')
+    df_ttps.head()
+
+    # Push mitre ttps into df
+    techniques_df = pd.json_normalize(all_techniques)
+    # Drop sub-techniques
+    techniques_df = techniques_df[techniques_df['x_mitre_is_subtechnique']==False]
+    techniques_df = techniques_df[['matrix','tactic','technique','technique_id']]
+
+    # technique_id has a one to many relationship with tactic and the tactic column stores values as a list
+    # Flatten the tactic values so that we are left with a table of all techniques and tactics
+    techniques_df = techniques_df.explode("tactic")
+
+    mitre_merge_alert_ttp = pd.merge(
+        df_ttps,
+        techniques_df,
+        left_on=["mitre_technique"],
+        right_on=["technique_id"],
+    )
+
+    if args.csv == True:
+        mitre_merge_alert_ttp.to_csv(f'{args.project}_alerts.csv')
+
+    mitre_merge_alert_ttp.sort_values(by='severity', ascending=False).reset_index(drop=True).head()
+    mitre_merge_alert_ttp.loc[mitre_merge_alert_ttp['severity'] >= 8].sort_values(by='severity', ascending=False).reset_index(drop=True).head()
+    mitre_merge_alert_ttp.loc[mitre_merge_alert_ttp['technique'] == "Account Manipulation"].sort_values(by='severity', ascending=False).reset_index(drop=True).head()
+
+    # Create the png files
+    draw_charts(args.project, mitre_merge_alert_ttp)
 
     columns = [
         "id",
