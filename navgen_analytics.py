@@ -297,6 +297,43 @@ def main():
     NAME = "CB Endpoint Standard: Analytic Alerts with Scoring"
     write_layer(NAME, tl, f"{args.project}_attack_cb_metadata_score.json", max_score)
 
+    # Metadata score with sensor action layer
+    data = df[["technique_id","device_name","id","sensor_action"]].reset_index(drop=True).drop_duplicates()
+    data["id_sa"] = data['id'] + (' (' + data["sensor_action"] + ')').fillna('')
+    grouped = data.groupby(['technique_id'], as_index=False).agg({'id_sa': lambda x: x.tolist()})
+
+    score = []
+
+    for index, row in grouped.iterrows():
+        score.append(len(row['id_sa']))
+
+    grouped = grouped.assign(score = score)
+    grouped['id_sa'] = [',\n\n'.join(map(str, x)) for x in grouped['id_sa']]
+
+    tl = []
+    technique_enabled = True #for future use to enable or disable a technique based on a config file
+    show_tub_techniques = False #for future use to enable or disable a technique based on a config file
+    max_score = df_score['count'].max().item() # Ensure the gradient is set correctly and return int
+
+    for index, row in grouped.iterrows():
+        techniques = {
+                "techniqueID": row['technique_id'],
+                "score": row['score'],
+                "color": "",
+                "comment": "",
+                "enabled": technique_enabled,
+                "metadata": [
+                    {
+                        "name": "Alert ID",
+                        "value": row['id_sa']
+                    }
+                ],
+                "showSubtechniques": show_tub_techniques
+            }
+        tl.append(techniques)
+    NAME = "CB Endpoint Standard: Analytic Alerts with Scoring and Sensor Action"
+    write_layer(NAME, tl, f"{args.project}_attack_cb_metadata_score_sensorAction.json", max_score)
+
     # Metadata scoring alert count layer
     data = df[["technique_id","device_name","id"]].reset_index(drop=True).drop_duplicates()
     grouped = data.groupby(['technique_id'], as_index=False).agg({'id': lambda x: x.tolist()})
