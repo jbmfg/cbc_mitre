@@ -10,12 +10,16 @@ import argparse
 import json
 import sys
 from datetime import datetime
-
 import pandas as pd
 import plotly.express as px
 import plotly.io as pio
 
-
+# Pandas options
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', None)
+pd.set_option('display.max_colwidth', None)
+pio.templates.default = "seaborn"
 
 def write_to_disk(filename, json_data):
     filetimestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -92,6 +96,38 @@ def draw_charts(project, mitre_merge_alert_ttp):
     )
     fig.write_image(f"{project}_radar_cb_analytics_by_tactic.png", engine="kaleido")
 
+def write_layer(layer_name, techniques, out_file, max_value=0):
+    VERSION = "4.1"
+    NAME = "Carbon Black ATT&CK Analytics: Basic Example"
+    DESCRIPTION = "CB Analytics/Endpoint Standard"
+    DOMAIN = "enterprise-attack"
+    platform_layer = {
+        "name": NAME,
+        "description": DESCRIPTION,
+        "domain": DOMAIN,
+        "version": VERSION,
+        "filters": {"platforms": ["windows", "linux", "macOS"]},
+        "sorting": 3,
+        "techniques": techniques,
+        "gradient": {
+            "colors": ["#ffffff", "#78BE20"],
+            "minValue": 0,
+            "maxValue": 1,
+        },
+        "legendItems": [],
+        "metadata": [],
+        "showTacticRowBackground": True,
+        "tacticRowBackground": "#1d428a"
+    }
+    if max_value:
+        platform_layer["legendItems"] = [
+            {"color": "#ffffff", "label": "No alerts or events"},
+            {"color": "#0091da", "label": "TTP identified"}
+        ]
+        platform_layer["maxValue"] = max_value
+    write_to_disk(out_file, platform_layer)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="navgen_analytics.py",
@@ -103,26 +139,19 @@ def main():
     parser.add_argument("-l", "--local_ttps", action='store_true', help="Use local version of ttps in all_techniques.json")
     args = parser.parse_args()
 
-    if args.local_ttps:
-        with open("all_techniques.json", "r") as f:
-            all_techniques = json.load(f)
-    else:
-        all_techniques = get_mitre_ttps()
-
-    # Pandas options
-    pd.set_option('display.max_rows', None)
-    pd.set_option('display.max_columns', None)
-    pd.set_option('display.width', None)
-    pd.set_option('display.max_colwidth', None)
-    pio.templates.default = "seaborn"
 
     # Load json data into pandas data frame
     json_data = pd.read_json(args.alert_file)
+    # Create a list of the "results" key, aka the alerts
     bn = json_data.results.values.tolist()
+    # Push just the alerts into a dataframe
     df_alert = pd.DataFrame(json_data.results.values.tolist())
+    # Filter the alerts to only the CB_Analytics -
+    # should be unneccessary as we're only parsing CBA alerts
     df_alert = df_alert.loc[df_alert['type'] == 'CB_ANALYTICS']
     df_column_headers = df_alert.columns.tolist()
 
+    # Threat indicators are nested, flatten it
     df_threat_indicators = pd.json_normalize(
         bn,
         'threat_indicators',
@@ -131,19 +160,28 @@ def main():
         errors='ignore'
     )
     df_ttps = df_threat_indicators.explode('threat_indicators_ttps').drop(columns=['threat_indicators']).reset_index()
+    # Extract the mitre ttp and assign to mitre_technique key
     df_ttps['mitre_technique'] = df_ttps['threat_indicators_ttps'].str.extract(r'(?<=MITRE_)(.*?)(?=\_)')
     df_ttps.head()
 
-    # Push mitre ttps into df
+    # Get all techniques
+    if args.local_ttps:
+        with open("all_techniques.json", "r") as f:
+            all_techniques = json.load(f)
+    else:
+        all_techniques = get_mitre_ttps()
+    # Push mitre ttps into flattened df
     techniques_df = pd.json_normalize(all_techniques)
     # Drop sub-techniques
     techniques_df = techniques_df[techniques_df['x_mitre_is_subtechnique']==False]
+    # limit dataframe to 4 keys
     techniques_df = techniques_df[['matrix','tactic','technique','technique_id']]
 
     # technique_id has a one to many relationship with tactic and the tactic column stores values as a list
     # Flatten the tactic values so that we are left with a table of all techniques and tactics
     techniques_df = techniques_df.explode("tactic")
 
+    # Pull the mitre-sourced data into the CBA alert data
     mitre_merge_alert_ttp = pd.merge(
         df_ttps,
         techniques_df,
@@ -151,6 +189,7 @@ def main():
         right_on=["technique_id"],
     )
 
+    # Export to CSV if wanted
     if args.csv == True:
         mitre_merge_alert_ttp.to_csv(f'{args.project}_alerts.csv')
 
@@ -161,6 +200,7 @@ def main():
     # Create the png files
     draw_charts(args.project, mitre_merge_alert_ttp)
 
+    # Create the MITRE ATT&CK Navigator Layers
     columns = [
         "id",
         "legacy_alert_id",
@@ -180,13 +220,12 @@ def main():
     data = df[["tactic","technique_id"]].reset_index(drop=True).drop_duplicates()
     data = data.to_dict('records')
 
+    # Basic layer
     tl = []
-
     technique_enabled = True  # for future use to enable or disable a technique based on a config file
     show_tub_techniques = False  # for future use to enable or disable a technique based on a config file
 
     for d in data:
-
         techniques = {
                 "techniqueID": d.get('technique_id'),
                 "tactic": d.get('tactic'),
@@ -199,36 +238,15 @@ def main():
             }
         tl.append(techniques)
 
-    VERSION = "4.1"
     NAME = "Carbon Black ATT&CK Analytics: Basic Example"
-    DESCRIPTION = "CB Analytics/Endpoint Standard"
-    DOMAIN = "enterprise-attack"
-    platform_layer = {
-        "name": NAME,
-        "description": DESCRIPTION,
-        "domain": DOMAIN,
-        "version": VERSION,
-        "filters": {"platforms": ["windows", "linux", "macOS"]},
-        "sorting": 3,
-        "techniques": tl,
-        "gradient": {
-            "colors": ["#ffffff", "#78BE20"],
-            "minValue": 0,
-            "maxValue": 1,
-        },
-        "legendItems": [],
-        "metadata": [],
-        "showTacticRowBackground": True,
-        "tacticRowBackground": "#1d428a"
-    }
-    write_to_disk(f"{args.project}_attack_cb_basic.json", platform_layer)
+    write_layer(NAME, tl, f"{args.project}_attack_cb_basic.json")
 
+    # Metadata devices Layer
     data = df[["tactic","technique_id","device_name"]].reset_index(drop=True).drop_duplicates()
     grouped = data.groupby(['tactic','technique_id'], as_index=False).agg({'device_name': lambda x: x.tolist()})
     grouped = grouped.to_dict(orient="records")
 
     tl = []
-
     technique_enabled = True #for future use to enable or disable a technique based on a config file
     show_tub_techniques = False #for future use to enable or disable a technique based on a config file
 
@@ -252,30 +270,10 @@ def main():
             }
         tl.append(techniques)
 
-    VERSION = "4.1"
     NAME = "Carbon Black ATT&CK Analytics: Metadata Example"
-    DESCRIPTION = "CB Analytics/Endpoint Standard"
-    DOMAIN = "mitre-enterprise"
-    platform_layer = {
-        "name": NAME,
-        "description": DESCRIPTION,
-        "domain": DOMAIN,
-        "version": VERSION,
-        "filters": {"platforms": ["windows","linux","macOS"]},
-        "sorting": 3,
-        "techniques": tl,
-        "gradient": {
-            "colors": ["#ffffff", "#00C1D5"],
-            "minValue": 0,
-            "maxValue": 1,
-        },
-        "legendItems": [],
-        "metadata": [],
-        "showTacticRowBackground": True,
-        "tacticRowBackground": "#1d428a"
-    }
-    write_to_disk(f"{args.project}_attack_cb_metadata_devices.json", platform_layer)
+    write_layer(NAME, tl, f"{args.project}_attack_cb_metadata_devices.json")
 
+    # Meta data score layer
     df_score = (df['technique_id']
             .value_counts()
             .rename_axis('technique_id')
@@ -283,14 +281,12 @@ def main():
             .sort_values(by=['count'], ascending=True))
 
     tl = []
-
     technique_enabled = True #for future use to enable or disable a technique based on a config file
     show_tub_techniques = False #for future use to enable or disable a technique based on a config file
     max_score = df_score['count'].max().item() # Ensure the gradient is set correctly and return int
 
     for index, row in df_score.iterrows():
         #d['techniqueID'] = d.pop('technique_id')
-
         techniques = {
                 "techniqueID": row['technique_id'],
                 "score": row['count'],
@@ -301,61 +297,26 @@ def main():
                 "showSubtechniques": show_tub_techniques
             }
         tl.append(techniques)
-
-    VERSION = "4.1"
     NAME = "CB Endpoint Standard: Analytic Alerts with Scoring"
-    DESCRIPTION = "CB Analytics/Endpoint Standard"
-    DOMAIN = "mitre-enterprise"
-    platform_layer = {
-        "name": NAME,
-        "description": DESCRIPTION,
-        "domain": DOMAIN,
-        "version": VERSION,
-        "filters": {"platforms": ["windows","linux","macOS"]},
-        "sorting": 3,
-        "techniques": tl,
-        "gradient": {
-            "colors": ["#ffffff", "#0091da"],
-            "minValue": 0,
-            "maxValue": max_score
-        },
-        "legendItems": [
-            {
-                "color": "#ffffff",
-                "label": "No alerts or events"
-            },
-            {
-                "color": "#0091da",
-                "label": "TTP identified"
-            }
-        ],
-        "metadata": [],
-        "showTacticRowBackground": True,
-        "tacticRowBackground": "#1d428a"
-    }
-    write_to_disk(f"{args.project}_attack_cb_metadata_score.json", platform_layer)
+    write_layer(NAME, tl, f"{args.project}_attack_cb_metadata_score.json", max_score)
 
+    # Metadata scoring alert count layer
     data = df[["technique_id","device_name","id"]].reset_index(drop=True).drop_duplicates()
     grouped = data.groupby(['technique_id'], as_index=False).agg({'id': lambda x: x.tolist()})
 
     score = []
-
     for index, row in grouped.iterrows():
         score.append(len(row['id']))
 
     grouped = grouped.assign(score = score)
-
     grouped['id'] = [',\n\n'.join(map(str, x)) for x in grouped['id']]
 
     tl = []
-
     technique_enabled = True #for future use to enable or disable a technique based on a config file
     show_tub_techniques = False #for future use to enable or disable a technique based on a config file
     max_score = df_score['count'].max().item() # Ensure the gradient is set correctly and return int
 
     for index, row in grouped.iterrows():
-        #d['techniqueID'] = d.pop('technique_id')
-
         techniques = {
                 "techniqueID": row['technique_id'],
                 "score": row['score'],
@@ -371,40 +332,8 @@ def main():
                 "showSubtechniques": show_tub_techniques
             }
         tl.append(techniques)
-
-    VERSION = "4.1"
     NAME = "CB Endpoint Standard: Analytic Alerts with scoring by alert count"
-    DESCRIPTION = "CB Analytics/Endpoint Standard"
-    DOMAIN = "mitre-enterprise"
-    platform_layer = {
-        "name": NAME,
-        "description": DESCRIPTION,
-        "domain": DOMAIN,
-        "version": VERSION,
-        "filters": {"platforms": ["windows","linux","macOS"]},
-        "sorting": 3,
-        "techniques": tl,
-        "gradient": {
-            "colors": ["#ffffff", "#7932A9"],
-            "minValue": 0,
-            "maxValue": max_score
-        },
-        "legendItems": [
-            {
-                "color": "#ffffff",
-                "label": "No alerts or events"
-            },
-            {
-                "color": "#0091da",
-                "label": "TTP identified"
-            }
-        ],
-        "metadata": [],
-        "showTacticRowBackground": True,
-        "tacticRowBackground": "#1d428a"
-    }
-
-    write_to_disk(f'{args.project}_attack_cb_metadata_score_alert_count.json', platform_layer)
+    write_layer(NAME, tl, f'{args.project}_attack_cb_metadata_score_alert_count.json', max_score)
 
 
 if __name__ == "__main__":
