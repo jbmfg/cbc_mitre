@@ -212,6 +212,8 @@ def main():
         "device_username",
         "sensor_action"
     ]
+    technique_enabled = True #for future use to enable or disable a technique based on a config file
+    show_tub_techniques = False #for future use to enable or disable a technique based on a config file
 
     df = mitre_merge_alert_ttp[columns].rename_axis(None).reset_index(drop=True)
     data = df[["tactic","technique_id"]].reset_index(drop=True).drop_duplicates()
@@ -219,8 +221,6 @@ def main():
 
     # Basic layer
     tl = []
-    technique_enabled = True  # for future use to enable or disable a technique based on a config file
-    show_tub_techniques = False  # for future use to enable or disable a technique based on a config file
 
     for d in data:
         techniques = {
@@ -244,8 +244,6 @@ def main():
     grouped = grouped.to_dict(orient="records")
 
     tl = []
-    technique_enabled = True #for future use to enable or disable a technique based on a config file
-    show_tub_techniques = False #for future use to enable or disable a technique based on a config file
 
     for d in grouped:
         #d['techniqueID'] = d.pop('technique_id')
@@ -278,8 +276,6 @@ def main():
             .sort_values(by=['count'], ascending=True))
 
     tl = []
-    technique_enabled = True #for future use to enable or disable a technique based on a config file
-    show_tub_techniques = False #for future use to enable or disable a technique based on a config file
     max_score = df_score['count'].max().item() # Ensure the gradient is set correctly and return int
 
     for index, row in df_score.iterrows():
@@ -311,8 +307,6 @@ def main():
     grouped['id_sa'] = [',\n\n'.join(map(str, x)) for x in grouped['id_sa']]
 
     tl = []
-    technique_enabled = True #for future use to enable or disable a technique based on a config file
-    show_tub_techniques = False #for future use to enable or disable a technique based on a config file
     max_score = df_score['count'].max().item() # Ensure the gradient is set correctly and return int
 
     for index, row in grouped.iterrows():
@@ -336,6 +330,7 @@ def main():
 
     # Metadata scoring alert count layer
     data = df[["technique_id","device_name","id"]].reset_index(drop=True).drop_duplicates()
+    data = df[["technique_id","device_name","id"]].reset_index(drop=True)
     grouped = data.groupby(['technique_id'], as_index=False).agg({'id': lambda x: x.tolist()})
 
     score = []
@@ -346,8 +341,6 @@ def main():
     grouped['id'] = [',\n\n'.join(map(str, x)) for x in grouped['id']]
 
     tl = []
-    technique_enabled = True #for future use to enable or disable a technique based on a config file
-    show_tub_techniques = False #for future use to enable or disable a technique based on a config file
     max_score = df_score['count'].max().item() # Ensure the gradient is set correctly and return int
 
     for index, row in grouped.iterrows():
