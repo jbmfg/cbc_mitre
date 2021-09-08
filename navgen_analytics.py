@@ -188,6 +188,8 @@ def main():
 
     # Export to CSV if wanted
     if args.csv == True:
+        mitre_merge_alert_ttp.loc[:,"cbc_link"] =\
+        "https://defense.conferdeploy.net/triage?incidentId=" + mitre_merge_alert_ttp.loc[:,"threat_id"]
         mitre_merge_alert_ttp.to_csv(f'{args.project}_alerts.csv')
 
     mitre_merge_alert_ttp.sort_values(by='severity', ascending=False).reset_index(drop=True).head()
